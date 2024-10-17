@@ -5,17 +5,12 @@ import SearchDetailDialog, {
   SearchTab,
 } from "@/components/overlay/detail/SearchDetailDialog";
 import { Toaster } from "@/components/ui/sonner";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { FrigateConfig } from "@/types/frigateConfig";
 import { SearchFilter, SearchResult, SearchSource } from "@/types/search";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { isDesktop, isMobileOnly } from "react-device-detect";
-import { LuColumns, LuSearchX } from "react-icons/lu";
+import { isMobileOnly } from "react-device-detect";
+import { LuImage, LuSearchX, LuText } from "react-icons/lu";
 import useSWR from "swr";
 import ExploreView from "../explore/ExploreView";
 import useKeyboardListener, {
@@ -26,14 +21,15 @@ import InputWithTags from "@/components/input/InputWithTags";
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 import { isEqual } from "lodash";
 import { formatDateToLocaleString } from "@/utils/dateUtil";
-import { Slider } from "@/components/ui/slider";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
-import { usePersistence } from "@/hooks/use-persistence";
 import SearchThumbnailFooter from "@/components/card/SearchThumbnailFooter";
+import SearchSettings from "@/components/settings/SearchSettings";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import Chip from "@/components/indicators/Chip";
+import { TooltipPortal } from "@radix-ui/react-tooltip";
 
 type SearchViewProps = {
   search: string;
@@ -42,12 +38,16 @@ type SearchViewProps = {
   searchResults?: SearchResult[];
   isLoading: boolean;
   hasMore: boolean;
+  columns: number;
+  defaultView?: string;
   setSearch: (search: string) => void;
   setSimilaritySearch: (search: SearchResult) => void;
   setSearchFilter: (filter: SearchFilter) => void;
   onUpdateFilter: (filter: SearchFilter) => void;
   loadMore: () => void;
   refresh: () => void;
+  setColumns: (columns: number) => void;
+  setDefaultView: (name: string) => void;
 };
 export default function SearchView({
   search,
@@ -56,12 +56,16 @@ export default function SearchView({
   searchResults,
   isLoading,
   hasMore,
+  columns,
+  defaultView = "summary",
   setSearch,
   setSimilaritySearch,
   setSearchFilter,
   onUpdateFilter,
   loadMore,
   refresh,
+  setColumns,
+  setDefaultView,
 }: SearchViewProps) {
   const contentRef = useRef<HTMLDivElement | null>(null);
   const { data: config } = useSWR<FrigateConfig>("config", {
@@ -70,18 +74,15 @@ export default function SearchView({
 
   // grid
 
-  const [columnCount, setColumnCount] = usePersistence("exploreGridColumns", 4);
-  const effectiveColumnCount = useMemo(() => columnCount ?? 4, [columnCount]);
-
   const gridClassName = cn(
     "grid w-full gap-2 px-1 gap-2 lg:gap-4 md:mx-2",
     isMobileOnly && "grid-cols-2",
     {
-      "sm:grid-cols-2": effectiveColumnCount <= 2,
-      "sm:grid-cols-3": effectiveColumnCount === 3,
-      "sm:grid-cols-4": effectiveColumnCount === 4,
-      "sm:grid-cols-5": effectiveColumnCount === 5,
-      "sm:grid-cols-6": effectiveColumnCount === 6,
+      "sm:grid-cols-2": columns <= 2,
+      "sm:grid-cols-3": columns === 3,
+      "sm:grid-cols-4": columns === 4,
+      "sm:grid-cols-5": columns === 5,
+      "sm:grid-cols-6": columns === 6,
     },
   );
 
@@ -150,6 +151,8 @@ export default function SearchView({
           : ["12:00AM-11:59PM"],
       before: [formatDateToLocaleString()],
       after: [formatDateToLocaleString(-5)],
+      min_score: ["50"],
+      max_score: ["100"],
     }),
     [config, allLabels, allZones, allSubLabels],
   );
@@ -185,6 +188,21 @@ export default function SearchView({
   useEffect(() => {
     setSelectedIndex(0);
   }, [searchTerm, searchFilter]);
+
+  // confidence score
+
+  const zScoreToConfidence = (score: number) => {
+    // Normalizing is not needed for similarity searches
+    // Sigmoid function for normalized: 1 / (1 + e^x)
+    // Cosine for similarity
+    if (searchFilter) {
+      const notNormalized = searchFilter?.search_type?.includes("similarity");
+
+      const confidence = notNormalized ? 1 - score : 1 / (1 + Math.exp(score));
+
+      return Math.round(confidence * 100);
+    }
+  };
 
   // update search detail when results change
 
@@ -342,11 +360,19 @@ export default function SearchView({
 
         {hasExistingSearch && (
           <ScrollArea className="w-full whitespace-nowrap lg:ml-[35%]">
-            <div className="flex flex-row">
+            <div className="flex flex-row gap-2">
               <SearchFilterGroup
                 className={cn(
                   "w-full justify-between md:justify-start lg:justify-end",
                 )}
+                filter={searchFilter}
+                onUpdateFilter={onUpdateFilter}
+              />
+              <SearchSettings
+                columns={columns}
+                setColumns={setColumns}
+                defaultView={defaultView}
+                setDefaultView={setDefaultView}
                 filter={searchFilter}
                 onUpdateFilter={onUpdateFilter}
               />
@@ -385,7 +411,7 @@ export default function SearchView({
                     key={value.id}
                     ref={(item) => (itemRefs.current[index] = item)}
                     data-start={value.start_time}
-                    className="review-item relative rounded-lg"
+                    className="review-item relative flex flex-col rounded-lg"
                   >
                     <div
                       className={cn(
@@ -396,13 +422,38 @@ export default function SearchView({
                         searchResult={value}
                         onClick={() => onSelectSearch(value, index)}
                       />
+                      {(searchTerm ||
+                        searchFilter?.search_type?.includes("similarity")) && (
+                        <div className={cn("absolute right-2 top-2 z-40")}>
+                          <Tooltip>
+                            <TooltipTrigger>
+                              <Chip
+                                className={`flex select-none items-center justify-between space-x-1 bg-gray-500 bg-gradient-to-br from-gray-400 to-gray-500 text-xs capitalize text-white`}
+                              >
+                                {value.search_source == "thumbnail" ? (
+                                  <LuImage className="size-3" />
+                                ) : (
+                                  <LuText className="size-3" />
+                                )}
+                              </Chip>
+                            </TooltipTrigger>
+                            <TooltipPortal>
+                              <TooltipContent>
+                                Matched {value.search_source} at{" "}
+                                {zScoreToConfidence(value.search_distance)}%
+                              </TooltipContent>
+                            </TooltipPortal>
+                          </Tooltip>
+                        </div>
+                      )}
                     </div>
                     <div
                       className={`review-item-ring pointer-events-none absolute inset-0 z-10 size-full rounded-lg outline outline-[3px] -outline-offset-[2.8px] ${selected ? `shadow-selected outline-selected` : "outline-transparent duration-500"}`}
                     />
-                    <div className="flex w-full items-center justify-between rounded-b-lg border border-t-0 bg-card p-3 text-card-foreground">
+                    <div className="flex w-full grow items-center justify-between rounded-b-lg border border-t-0 bg-card p-3 text-card-foreground">
                       <SearchThumbnailFooter
                         searchResult={value}
+                        columns={columns}
                         findSimilar={() => {
                           if (config?.semantic_search.enabled) {
                             setSimilaritySearch(value);
@@ -425,53 +476,13 @@ export default function SearchView({
             <div className="flex h-12 w-full justify-center">
               {hasMore && isLoading && <ActivityIndicator />}
             </div>
-
-            {isDesktop && columnCount && (
-              <div
-                className={cn(
-                  "fixed bottom-12 right-3 z-50 flex flex-row gap-2 lg:bottom-9",
-                )}
-              >
-                <Popover>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <PopoverTrigger asChild>
-                        <div className="cursor-pointer rounded-lg bg-secondary text-secondary-foreground opacity-75 transition-all duration-300 hover:bg-muted hover:opacity-100">
-                          <LuColumns className="size-5 md:m-[6px]" />
-                        </div>
-                      </PopoverTrigger>
-                    </TooltipTrigger>
-                    <TooltipContent>Adjust Grid Columns</TooltipContent>
-                  </Tooltip>
-                  <PopoverContent className="mr-2 w-80">
-                    <div className="space-y-4">
-                      <div className="font-medium leading-none">
-                        Grid Columns
-                      </div>
-                      <div className="flex items-center space-x-4">
-                        <Slider
-                          value={[effectiveColumnCount]}
-                          onValueChange={([value]) => setColumnCount(value)}
-                          max={6}
-                          min={2}
-                          step={1}
-                          className="flex-grow"
-                        />
-                        <span className="w-9 text-center text-sm font-medium">
-                          {effectiveColumnCount}
-                        </span>
-                      </div>
-                    </div>
-                  </PopoverContent>
-                </Popover>
-              </div>
-            )}
           </>
         )}
       </div>
       {searchFilter &&
         Object.keys(searchFilter).length === 0 &&
-        !searchTerm && (
+        !searchTerm &&
+        defaultView == "summary" && (
           <div className="scrollbar-container flex size-full flex-col overflow-y-auto">
             <ExploreView
               searchDetail={searchDetail}

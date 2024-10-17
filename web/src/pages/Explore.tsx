@@ -7,12 +7,14 @@ import ActivityIndicator from "@/components/indicators/activity-indicator";
 import AnimatedCircularProgressBar from "@/components/ui/circular-progress-bar";
 import { useApiFilterArgs } from "@/hooks/use-api-filter";
 import { useTimezone } from "@/hooks/use-date-utils";
+import { usePersistence } from "@/hooks/use-persistence";
 import { FrigateConfig } from "@/types/frigateConfig";
 import { SearchFilter, SearchQuery, SearchResult } from "@/types/search";
 import { ModelState } from "@/types/ws";
 import { formatSecondsToDuration } from "@/utils/dateUtil";
 import SearchView from "@/views/search/SearchView";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { isMobileOnly } from "react-device-detect";
 import { LuCheck, LuExternalLink, LuX } from "react-icons/lu";
 import { TbExclamationCircle } from "react-icons/tb";
 import { Link } from "react-router-dom";
@@ -27,6 +29,23 @@ export default function Explore() {
   const { data: config } = useSWR<FrigateConfig>("config", {
     revalidateOnFocus: false,
   });
+
+  // grid
+
+  const [columnCount, setColumnCount] = usePersistence("exploreGridColumns", 4);
+  const gridColumns = useMemo(() => {
+    if (isMobileOnly) {
+      return 2;
+    }
+    return columnCount ?? 4;
+  }, [columnCount]);
+
+  // default layout
+
+  const [defaultView, setDefaultView, defaultViewLoaded] = usePersistence(
+    "exploreDefaultView",
+    "summary",
+  );
 
   const timezone = useTimezone(config);
 
@@ -65,7 +84,11 @@ export default function Explore() {
   const searchQuery: SearchQuery = useMemo(() => {
     // no search parameters
     if (searchSearchParams && Object.keys(searchSearchParams).length === 0) {
-      return null;
+      if (defaultView == "grid") {
+        return ["events", {}];
+      } else {
+        return null;
+      }
     }
 
     // parameters, but no search term and not similarity
@@ -86,6 +109,8 @@ export default function Explore() {
           after: searchSearchParams["after"],
           time_range: searchSearchParams["time_range"],
           search_type: searchSearchParams["search_type"],
+          min_score: searchSearchParams["min_score"],
+          max_score: searchSearchParams["max_score"],
           limit:
             Object.keys(searchSearchParams).length == 0 ? API_LIMIT : undefined,
           timezone,
@@ -112,12 +137,14 @@ export default function Explore() {
         after: searchSearchParams["after"],
         time_range: searchSearchParams["time_range"],
         search_type: searchSearchParams["search_type"],
+        min_score: searchSearchParams["min_score"],
+        max_score: searchSearchParams["max_score"],
         event_id: searchSearchParams["event_id"],
         timezone,
         include_thumbnails: 0,
       },
     ];
-  }, [searchTerm, searchSearchParams, similaritySearch, timezone]);
+  }, [searchTerm, searchSearchParams, similaritySearch, timezone, defaultView]);
 
   // paging
 
@@ -253,12 +280,13 @@ export default function Explore() {
   };
 
   if (
-    config?.semantic_search.enabled &&
-    (!reindexState ||
-      !textModelState ||
-      !textTokenizerState ||
-      !visionModelState ||
-      !visionFeatureExtractorState)
+    !defaultViewLoaded ||
+    (config?.semantic_search.enabled &&
+      (!reindexState ||
+        !textModelState ||
+        !textTokenizerState ||
+        !visionModelState ||
+        !visionFeatureExtractorState))
   ) {
     return (
       <ActivityIndicator className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2" />
@@ -385,6 +413,8 @@ export default function Explore() {
           searchResults={searchResults}
           isLoading={(isLoadingInitialData || isLoadingMore) ?? true}
           hasMore={!isReachingEnd}
+          columns={gridColumns}
+          defaultView={defaultView}
           setSearch={setSearch}
           setSimilaritySearch={(search) => {
             setSearchFilter({
@@ -395,6 +425,8 @@ export default function Explore() {
           }}
           setSearchFilter={setSearchFilter}
           onUpdateFilter={setSearchFilter}
+          setColumns={setColumnCount}
+          setDefaultView={setDefaultView}
           loadMore={loadMore}
           refresh={mutate}
         />

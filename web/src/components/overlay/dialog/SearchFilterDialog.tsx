@@ -1,4 +1,4 @@
-import { FaArrowRight, FaCog } from "react-icons/fa";
+import { FaArrowRight, FaFilter } from "react-icons/fa";
 
 import { useEffect, useMemo, useState } from "react";
 import { PlatformAwareSheet } from "./PlatformAwareDialog";
@@ -18,12 +18,13 @@ import {
 } from "@/components/ui/popover";
 import { isDesktop, isMobileOnly } from "react-device-detect";
 import { useFormattedHour } from "@/hooks/use-date-utils";
-import Heading from "@/components/ui/heading";
 import FilterSwitch from "@/components/filter/FilterSwitch";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
+import { DualThumbSlider } from "@/components/ui/slider";
+import { Input } from "@/components/ui/input";
 
 type SearchFilterDialogProps = {
   config?: FrigateConfig;
@@ -47,13 +48,38 @@ export default function SearchFilterDialog({
   const [currentFilter, setCurrentFilter] = useState(filter ?? {});
   const { data: allSubLabels } = useSWR(["sub_labels", { split_joined: 1 }]);
 
+  useEffect(() => {
+    if (filter) {
+      setCurrentFilter(filter);
+    }
+  }, [filter]);
+
   // state
 
   const [open, setOpen] = useState(false);
 
+  const moreFiltersSelected = useMemo(
+    () =>
+      currentFilter &&
+      (currentFilter.time_range ||
+        (currentFilter.min_score ?? 0) > 0.5 ||
+        (currentFilter.max_score ?? 1) < 1 ||
+        (currentFilter.zones?.length ?? 0) > 0 ||
+        (currentFilter.sub_labels?.length ?? 0) > 0),
+    [currentFilter],
+  );
+
   const trigger = (
-    <Button className="flex items-center gap-2" size="sm">
-      <FaCog className={"text-secondary-foreground"} />
+    <Button
+      className="flex items-center gap-2"
+      size="sm"
+      variant={moreFiltersSelected ? "select" : "default"}
+    >
+      <FaFilter
+        className={cn(
+          moreFiltersSelected ? "text-white" : "text-secondary-foreground",
+        )}
+      />
       More Filters
     </Button>
   );
@@ -80,12 +106,11 @@ export default function SearchFilterDialog({
           setCurrentFilter({ ...currentFilter, sub_labels: newSubLabels })
         }
       />
-      <SearchTypeContent
-        searchSources={
-          currentFilter?.search_type ?? ["thumbnail", "description"]
-        }
-        setSearchSources={(newSearchSource) =>
-          onUpdateFilter({ ...currentFilter, search_type: newSearchSource })
+      <ScoreFilterContent
+        minScore={currentFilter.min_score}
+        maxScore={currentFilter.max_score}
+        setScoreRange={(min, max) =>
+          setCurrentFilter({ ...currentFilter, min_score: min, max_score: max })
         }
       />
       {isDesktop && <DropdownMenuSeparator />}
@@ -104,7 +129,15 @@ export default function SearchFilterDialog({
         </Button>
         <Button
           onClick={() => {
-            setCurrentFilter(filter ?? {});
+            setCurrentFilter((prevFilter) => ({
+              ...prevFilter,
+              time_range: undefined,
+              zones: undefined,
+              sub_labels: undefined,
+              search_type: ["thumbnail", "description"],
+              min_score: undefined,
+              max_score: undefined,
+            }));
           }}
         >
           Reset
@@ -118,7 +151,7 @@ export default function SearchFilterDialog({
       trigger={trigger}
       content={content}
       contentClassName={cn(
-        "w-auto lg:w-[300px] scrollbar-container h-full overflow-auto px-4",
+        "w-auto lg:min-w-[275px] scrollbar-container h-full overflow-auto px-4",
         isMobileOnly && "pb-20",
       )}
       open={open}
@@ -184,8 +217,8 @@ function TimeRangeFilterContent({
 
   return (
     <div className="overflow-x-hidden">
-      <Heading as="h4">Time Range</Heading>
-      <div className="my-3 flex flex-row items-center justify-center gap-2">
+      <div className="text-lg">Time Range</div>
+      <div className="mt-3 flex flex-row items-center justify-center gap-2">
         <Popover
           open={startOpen}
           onOpenChange={(open) => {
@@ -280,7 +313,7 @@ export function ZoneFilterContent({
     <>
       <div className="overflow-x-hidden">
         <DropdownMenuSeparator className="mb-3" />
-        <Heading as="h4">Zones</Heading>
+        <div className="text-lg">Zones</div>
         {allZones && (
           <>
             <div className="mb-5 mt-2.5 flex items-center justify-between">
@@ -301,7 +334,7 @@ export function ZoneFilterContent({
                 }}
               />
             </div>
-            <div className="my-2.5 flex flex-col gap-2.5">
+            <div className="mt-2.5 flex flex-col gap-2.5">
               {allZones.map((item) => (
                 <FilterSwitch
                   key={item}
@@ -346,7 +379,7 @@ export function SubFilterContent({
   return (
     <div className="overflow-x-hidden">
       <DropdownMenuSeparator className="mb-3" />
-      <Heading as="h4">Sub Labels</Heading>
+      <div className="text-lg">Sub Labels</div>
       <div className="mb-5 mt-2.5 flex items-center justify-between">
         <Label className="mx-2 cursor-pointer text-primary" htmlFor="allLabels">
           All Sub Labels
@@ -362,7 +395,7 @@ export function SubFilterContent({
           }}
         />
       </div>
-      <div className="my-2.5 flex flex-col gap-2.5">
+      <div className="mt-2.5 flex flex-col gap-2.5">
         {allSubLabels.map((item) => (
           <FilterSwitch
             key={item}
@@ -391,58 +424,54 @@ export function SubFilterContent({
   );
 }
 
-type SearchTypeContentProps = {
-  searchSources: SearchSource[] | undefined;
-  setSearchSources: (sources: SearchSource[] | undefined) => void;
+type ScoreFilterContentProps = {
+  minScore: number | undefined;
+  maxScore: number | undefined;
+  setScoreRange: (min: number | undefined, max: number | undefined) => void;
 };
-export function SearchTypeContent({
-  searchSources,
-  setSearchSources,
-}: SearchTypeContentProps) {
+export function ScoreFilterContent({
+  minScore,
+  maxScore,
+  setScoreRange,
+}: ScoreFilterContentProps) {
   return (
-    <>
-      <div className="overflow-x-hidden">
-        <DropdownMenuSeparator className="mb-3" />
-        <Heading as="h4">Search Sources</Heading>
-        <div className="my-2.5 flex flex-col gap-2.5">
-          <FilterSwitch
-            label="Thumbnail Image"
-            isChecked={searchSources?.includes("thumbnail") ?? false}
-            onCheckedChange={(isChecked) => {
-              const updatedSources = searchSources ? [...searchSources] : [];
+    <div className="overflow-x-hidden">
+      <DropdownMenuSeparator className="mb-3" />
+      <div className="mb-3 text-lg">Score</div>
+      <div className="flex items-center gap-1">
+        <Input
+          className="w-12"
+          inputMode="numeric"
+          value={Math.round((minScore ?? 0.5) * 100)}
+          onChange={(e) => {
+            const value = e.target.value;
 
-              if (isChecked) {
-                updatedSources.push("thumbnail");
-                setSearchSources(updatedSources);
-              } else {
-                if (updatedSources.length > 1) {
-                  const index = updatedSources.indexOf("thumbnail");
-                  if (index !== -1) updatedSources.splice(index, 1);
-                  setSearchSources(updatedSources);
-                }
-              }
-            }}
-          />
-          <FilterSwitch
-            label="Description"
-            isChecked={searchSources?.includes("description") ?? false}
-            onCheckedChange={(isChecked) => {
-              const updatedSources = searchSources ? [...searchSources] : [];
+            if (value) {
+              setScoreRange(parseInt(value) / 100.0, maxScore ?? 1.0);
+            }
+          }}
+        />
+        <DualThumbSlider
+          className="w-full"
+          min={0.5}
+          max={1.0}
+          step={0.01}
+          value={[minScore ?? 0.5, maxScore ?? 1.0]}
+          onValueChange={([min, max]) => setScoreRange(min, max)}
+        />
+        <Input
+          className="w-12"
+          inputMode="numeric"
+          value={Math.round((maxScore ?? 1.0) * 100)}
+          onChange={(e) => {
+            const value = e.target.value;
 
-              if (isChecked) {
-                updatedSources.push("description");
-                setSearchSources(updatedSources);
-              } else {
-                if (updatedSources.length > 1) {
-                  const index = updatedSources.indexOf("description");
-                  if (index !== -1) updatedSources.splice(index, 1);
-                  setSearchSources(updatedSources);
-                }
-              }
-            }}
-          />
-        </div>
+            if (value) {
+              setScoreRange(minScore ?? 0.5, parseInt(value) / 100.0);
+            }
+          }}
+        />
       </div>
-    </>
+    </div>
   );
 }
